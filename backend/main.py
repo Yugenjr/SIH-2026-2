@@ -1,14 +1,16 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
+import os
+import datetime
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-import os
-import datetime
+from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+load_dotenv()
 
-from models.domain import (
-    UserProfile, SchemeConfig, Application, ApplicationDocument,
-    Deficiency, Fellowship, AuditRecord, CrossDocValidationResult, ExtractedField
-)
+from database import get_db, engine
+from init_db import init_db
+from models.domain import UserProfile, SchemeConfig, Application
 from services.rules_engine import RulesEngine
 from services.doc_intelligence import DocumentIntelligence
 from services.anomaly_engine import AnomalyEngine
@@ -17,12 +19,20 @@ from services.sarvam_service import SarvamLanguageService
 from adapters.connected_adapters import (
     IdentityVerificationAdapter, DigiLockerAdapter, PFMSAdapter, NSPAdapter
 )
-from seed import SEED_SCHEMES, SEED_STUDENT_PROFILE, generate_synthetic_applications, SEED_FELLOWSHIP, SEED_AUDIT_LOGS
+import repositories.crud as crud
+
+import contextlib
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 app = FastAPI(
     title="SAHA API",
     description="Intelligent Scholarship Verification & Lifecycle Platform API (Ministry of Tribal Affairs)",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Enable CORS for frontend development
@@ -34,53 +44,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory database stores initialized with synthetic data
-DB_SCHEMES = {s["id"]: SchemeConfig(**s) for s in SEED_SCHEMES}
-DB_APPLICATIONS = {a["id"]: a for a in generate_synthetic_applications()}
-DB_FELLOWSHIP = dict(SEED_FELLOWSHIP)
-DB_AUDIT_LOGS = list(SEED_AUDIT_LOGS)
-
 groq_service = GroqChatService()
 sarvam_service = SarvamLanguageService()
 
 @app.get("/api/health")
-def health_check():
+def health_check(db: Session = Depends(get_db)):
+    apps_count = len(crud.get_applications(db))
     return {
         "status": "HEALTHY",
         "platform": "SAHA",
         "tagline": "From application to opportunity.",
         "timestamp": datetime.datetime.now().isoformat(),
-        "total_applications": len(DB_APPLICATIONS)
+        "total_applications": apps_count,
+        "database": "CONNECTED"
     }
 
 # --- STUDENT & SCHEMES ---
 @app.get("/api/student/profile")
-def get_student_profile():
-    return SEED_STUDENT_PROFILE
+def get_student_profile(db: Session = Depends(get_db)):
+    profile = crud.get_student_profile(db)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    return profile
 
 @app.get("/api/schemes")
-def get_schemes():
-    return list(DB_SCHEMES.values())
+def get_schemes(db: Session = Depends(get_db)):
+    return crud.get_schemes(db)
 
 @app.post("/api/schemes/evaluate")
-def evaluate_eligibility(payload: Dict[str, Any]):
-    profile_data = payload.get("profile", SEED_STUDENT_PROFILE)
+def evaluate_eligibility(payload: Dict[str, Any], db: Session = Depends(get_db)):
+    profile_data = payload.get("profile") or crud.get_student_profile(db)
     scheme_id = payload.get("scheme_id", "SCHEME-NFST")
     
-    scheme = DB_SCHEMES.get(scheme_id)
-    if not scheme:
+    scheme_dict = crud.get_scheme_by_id(db, scheme_id)
+    if not scheme_dict:
         raise HTTPException(status_code=404, detail="Scheme not found")
         
+    scheme = SchemeConfig(**scheme_dict)
     profile = UserProfile(**profile_data)
     result = RulesEngine.evaluate(profile, scheme)
     return result
 
 @app.post("/api/schemes/simulate")
-def simulate_scheme_impact(payload: Dict[str, Any]):
+def simulate_scheme_impact(payload: Dict[str, Any], db: Session = Depends(get_db)):
     old_income = float(payload.get("old_income_limit", 200000.0))
     new_income = float(payload.get("new_income_limit", 250000.0))
     
-    apps_list = list(DB_APPLICATIONS.values())
+    apps_list = crud.get_applications(db)
     result = RulesEngine.simulate_impact(apps_list, old_income, new_income)
     return result
 
@@ -89,61 +99,70 @@ def simulate_scheme_impact(payload: Dict[str, Any]):
 def get_applications(
     status: Optional[str] = None,
     officer_id: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
 ):
-    apps = list(DB_APPLICATIONS.values())
-    if status:
-        apps = [a for a in apps if a["status"] == status]
-    if officer_id:
-        apps = [a for a in apps if a.get("assigned_officer_id") == officer_id]
-    if search:
-        s = search.lower()
-        apps = [a for a in apps if s in a["student_name"].lower() or s in a["application_number"].lower()]
-    return apps
+    return crud.get_applications(db, status=status, officer_id=officer_id, search=search)
 
 @app.get("/api/applications/{app_id}")
-def get_application_by_id(app_id: str):
-    app = DB_APPLICATIONS.get(app_id)
+def get_application_by_id(app_id: str, db: Session = Depends(get_db)):
+    app = crud.get_application_by_id(db, app_id)
     if not app:
-        # Try matching by application_number
-        for a in DB_APPLICATIONS.values():
-            if a["application_number"] == app_id:
-                return a
         raise HTTPException(status_code=404, detail="Application not found")
     return app
 
 # --- DOCUMENT INTELLIGENCE ---
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 @app.post("/api/documents/upload")
-def upload_document(
+async def upload_document(
     doc_type: str = Form(...),
     simulate_blurry: bool = Form(False),
-    application_id: str = Form("NFST-2026-00821")
+    application_id: str = Form("NFST-2026-00821"),
+    file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
 ):
-    file_name = f"{doc_type.replace(' ', '_')}_upload.pdf"
-    if simulate_blurry:
-        file_name = f"Blurry_{file_name}"
+    file_bytes = None
+    if file:
+        file_name = file.filename
+        file_bytes = await file.read()
+        # Save file to local uploads directory (outside git tracking)
+        save_path = os.path.join(UPLOAD_DIR, file_name)
+        with open(save_path, "wb") as f:
+            f.write(file_bytes)
+    else:
+        file_name = f"{doc_type.replace(' ', '_')}_upload.pdf"
+        if simulate_blurry:
+            file_name = f"Blurry_{file_name}"
 
-    res = DocumentIntelligence.process_upload(file_name, doc_type, simulate_blurry)
+    res = DocumentIntelligence.process_upload(
+        file_name=file_name, 
+        doc_type=doc_type, 
+        simulate_blurry=simulate_blurry,
+        file_bytes=file_bytes
+    )
     
     if res["success"]:
-        # Attach to application if exists
-        app = DB_APPLICATIONS.get(application_id)
+        app = crud.get_application_by_id(db, application_id)
         if app:
+            docs = app.get("documents", [])
             new_doc = {
-                "id": f"DOC-{len(app['documents']) + 1}",
+                "id": f"DOC-{len(docs) + 1}",
                 "application_id": application_id,
                 "doc_type": doc_type,
                 "file_name": file_name,
-                "quality": "GOOD",
-                "ocr_confidence": 0.97,
+                "quality": res.get("quality_status", "GOOD"),
+                "ocr_confidence": res.get("ocr_confidence", 0.97),
                 "is_valid": True,
                 "extracted_fields": res["extracted_fields"]
             }
-            app["documents"].append(new_doc)
-            
-            # Add audit record
-            DB_AUDIT_LOGS.append({
-                "id": f"AUD-{len(DB_AUDIT_LOGS)+1:02d}",
+            docs.append(new_doc)
+            app["documents"] = docs
+            crud.update_application(db, app)
+
+            crud.add_audit_record(db, {
+                "id": f"AUD-{len(crud.get_audit_timeline(db, application_id))+1:02d}",
                 "application_id": application_id,
                 "timestamp": datetime.datetime.now().strftime("%d %b %H:%M"),
                 "actor": "Student",
@@ -157,56 +176,30 @@ def upload_document(
 
 # --- DEFICIENCY RESOLUTION LOOP ---
 @app.post("/api/deficiencies/{deficiency_id}/resolve")
-def resolve_deficiency(deficiency_id: str, payload: Dict[str, Any]):
+def resolve_deficiency(
+    deficiency_id: str, 
+    payload: Dict[str, Any], 
+    db: Session = Depends(get_db)
+):
     app_id = payload.get("application_id", "NFST-2026-00821")
-    app = DB_APPLICATIONS.get(app_id)
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
-
-    # Find deficiency
-    def_found = None
-    for d in app["deficiencies"]:
-        if d["id"] == deficiency_id:
-            d["status"] = "RESOLVED"
-            d["resolved_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            def_found = d
-            break
-
-    if def_found:
-        # Update application cross doc status
-        app["cross_doc_status"]["dob_match"] = True
-        app["cross_doc_status"]["overall_status"] = "PASS"
-        app["cross_doc_status"]["flags"] = []
-        app["status"] = "OFFICER_SCRUTINY"
-        app["current_stage_label"] = "Officer Scrutiny"
-
-        # Record decision replay audit
-        DB_AUDIT_LOGS.append({
-            "id": f"AUD-{len(DB_AUDIT_LOGS)+1:02d}",
-            "application_id": app_id,
-            "timestamp": datetime.datetime.now().strftime("%d %b %H:%M"),
-            "actor": "Arun Kumar (Student)",
-            "actor_role": "STUDENT",
-            "action": "Deficiency Corrected & Document Revalidated",
-            "reason": "Corrected DOB document revalidated by AI. Status updated to RESOLVED.",
-            "scheme_version": app.get("scheme_version", "NFST-2026.1")
-        })
-
-        return {"success": True, "message": "Deficiency resolved and AI revalidated successfully", "application": app}
-
+    updated_app = crud.resolve_deficiency(db, app_id, deficiency_id)
+    if updated_app:
+        return {"success": True, "message": "Deficiency resolved and AI revalidated successfully", "application": updated_app}
     raise HTTPException(status_code=404, detail="Deficiency ID not found")
 
 # --- OFFICER WORKBENCH ---
 @app.get("/api/officer/queue")
-def get_officer_queue():
-    apps = list(DB_APPLICATIONS.values())
+def get_officer_queue(db: Session = Depends(get_db)):
+    apps = crud.get_applications(db)
     scrutiny_apps = [a for a in apps if a["status"] in ["OFFICER_SCRUTINY", "SUBMITTED", "DEFICIENT"]]
     
-    # Priority sorting: high priority if anomaly or DOB mismatch
     prioritized = []
     for a in scrutiny_apps:
         priority = "LOW"
-        if a.get("anomaly_score", 0) > 0.8 or not a["cross_doc_status"]["dob_match"]:
+        flags = a.get("cross_doc_status", {}).get("flags", [])
+        dob_match = a.get("cross_doc_status", {}).get("dob_match", True)
+
+        if a.get("anomaly_score", 0) > 0.8 or not dob_match:
             priority = "HIGH"
         elif a["status"] == "DEFICIENT":
             priority = "MEDIUM"
@@ -216,77 +209,36 @@ def get_officer_queue():
             "id": a["id"],
             "application_number": a["application_number"],
             "student_name": a["student_name"],
-            "reason": a["cross_doc_status"]["flags"][0] if a["cross_doc_status"]["flags"] else "Standard Document Review",
+            "reason": flags[0] if flags else "Standard Document Review",
             "age_days": 2,
             "sla_days_remaining": 5 if priority != "HIGH" else 2,
             "assigned_officer": a.get("assigned_officer_name", "Dr. Rajeshwar Prasad"),
             "status": a["status"]
         })
 
-    # Sort HIGH -> MEDIUM -> LOW
     prioritized.sort(key=lambda x: 0 if x["priority"] == "HIGH" else (1 if x["priority"] == "MEDIUM" else 2))
     return prioritized
 
 @app.post("/api/officer/decision")
-def record_officer_decision(payload: Dict[str, Any]):
+def record_officer_decision(payload: Dict[str, Any], db: Session = Depends(get_db)):
     app_id = payload.get("application_id")
     action = payload.get("action")  # APPROVE, REQUEST_CORRECTION, ESCALATE, REJECT
     reason = payload.get("reason", "Officer review completed")
 
-    app = DB_APPLICATIONS.get(app_id)
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
-
-    if action == "APPROVE":
-        app["status"] = "APPROVED"
-        app["current_stage_label"] = "Approved (Awarded)"
-        # Update Fellowship state
-        DB_FELLOWSHIP["status"] = "ACTIVE"
-    elif action == "REQUEST_CORRECTION":
-        app["status"] = "DEFICIENT"
-        app["current_stage_label"] = "Documents Required"
-        # Add new deficiency
-        new_def = {
-            "id": f"DEF-{app_id}-{len(app['deficiencies'])+1:02d}",
-            "application_id": app_id,
-            "doc_type": "Academic Marksheet",
-            "severity": "WARNING",
-            "problem": reason,
-            "required_action": "Upload valid document resolving discrepancy",
-            "deadline": "05 October 2026",
-            "status": "ACTION REQUIRED",
-            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "created_by": "Dr. Rajeshwar Prasad",
-            "resolved_at": None
-        }
-        app["deficiencies"].append(new_def)
-    elif action == "REJECT":
-        app["status"] = "REJECTED"
-        app["current_stage_label"] = "Rejected"
-
-    # Add audit entry
-    DB_AUDIT_LOGS.append({
-        "id": f"AUD-{len(DB_AUDIT_LOGS)+1:02d}",
-        "application_id": app_id,
-        "timestamp": datetime.datetime.now().strftime("%d %b %H:%M"),
-        "actor": "Dr. Rajeshwar Prasad (Officer)",
-        "actor_role": "OFFICER",
-        "action": f"Officer Decision: {action}",
-        "reason": reason,
-        "scheme_version": app.get("scheme_version", "NFST-2026.1")
-    })
-
-    return {"success": True, "status": app["status"], "application": app}
+    updated_app = crud.record_officer_decision(db, app_id, action, reason)
+    if updated_app:
+        return {"success": True, "status": updated_app["status"], "application": updated_app}
+    raise HTTPException(status_code=404, detail="Application not found")
 
 # --- FELLOWSHIP LIFECYCLE ---
 @app.get("/api/fellowship")
-def get_fellowship_details():
-    return DB_FELLOWSHIP
+def get_fellowship_details(db: Session = Depends(get_db)):
+    return crud.get_fellowship(db)
 
 # --- MOTA COMMAND CENTER ---
 @app.get("/api/mota/command-center")
-def get_mota_command_center():
-    apps = list(DB_APPLICATIONS.values())
+def get_mota_command_center(db: Session = Depends(get_db)):
+    apps = crud.get_applications(db)
     total = len(apps)
     approved = len([a for a in apps if a["status"] in ["APPROVED", "SELECTED"]])
     deficient = len([a for a in apps if a["status"] == "DEFICIENT"])
@@ -322,23 +274,68 @@ def get_mota_command_center():
 
 # --- DECISION REPLAY ---
 @app.get("/api/audit/{application_id}")
-def get_audit_timeline(application_id: str):
-    timeline = [log for log in DB_AUDIT_LOGS if log["application_id"] == application_id]
-    if not timeline:
-        return DB_AUDIT_LOGS  # Fallback to demo timeline
-    return timeline
+def get_audit_timeline(application_id: str, db: Session = Depends(get_db)):
+    return crud.get_audit_timeline(db, application_id)
 
 # --- AI CHATBOT & SARVAM SERVICES ---
 @app.post("/api/ai/chat")
-def chatbot_query(payload: Dict[str, Any]):
-    query = payload.get("query", "What is my application status?")
+def chatbot_query(payload: Dict[str, Any], db: Session = Depends(get_db)):
+    query = payload.get("query") or payload.get("message") or "What is my application status?"
     app_id = payload.get("application_id", "NFST-2026-00821")
+    target_lang = payload.get("language") or payload.get("lang") or "en"
     
-    app_data = DB_APPLICATIONS.get(app_id, {})
-    scheme_data = DB_SCHEMES.get("SCHEME-NFST", {})
-    
-    answer = groq_service.ask(query, app_data, scheme_data)
-    return {"query": query, "answer": answer}
+    app_data = crud.get_application_by_id(db, app_id) or {}
+    scheme_id = app_data.get("scheme_id", "SCHEME-NFST")
+    scheme_data = crud.get_scheme_by_id(db, scheme_id) or {}
+    profile_data = crud.get_student_profile(db) or {}
+    fellowship_data = crud.get_fellowship(db) or {}
+
+    # 1. Translate user query to canonical English if non-English
+    canonical_query = query
+    if target_lang != "en":
+        canonical_query = sarvam_service.translate_text(query, source_lang=target_lang, target_lang="en")
+
+    # 2. Get grounded answer from Groq / Deterministic DB fallback
+    answer_res = groq_service.provider.ask(
+        query=canonical_query,
+        app_context=app_data,
+        scheme_context=scheme_data,
+        profile_context=profile_data,
+        fellowship_context=fellowship_data
+    )
+    canonical_answer = answer_res["answer"]
+
+    # 3. Translate grounded answer to user target language if non-English
+    localized_answer = canonical_answer
+    if target_lang != "en":
+        localized_answer = sarvam_service.translate_text(canonical_answer, source_lang="en", target_lang=target_lang)
+
+    # 4. Audit log metadata
+    provider_info = answer_res["provider"]
+    if target_lang != "en":
+        provider_info += f" + Sarvam_Translate_{target_lang}"
+
+    crud.add_audit_record(db, {
+        "id": f"AUD-CHAT-{len(crud.get_audit_timeline(db, app_id))+1:02d}",
+        "application_id": app_id,
+        "timestamp": datetime.datetime.now().strftime("%d %b %H:%M"),
+        "actor": "Arun Kumar (Student)",
+        "actor_role": "STUDENT",
+        "action": f"Grounded AI Chatbot Query ({target_lang.upper()})",
+        "reason": f"Query: '{query[:40]}...' via {provider_info}",
+        "scheme_version": app_data.get("scheme_version", "NFST-2026.1")
+    })
+
+    return {
+        "query": query, 
+        "canonical_query": canonical_query,
+        "language": target_lang,
+        "answer": localized_answer,
+        "canonical_answer": canonical_answer,
+        "provider": provider_info,
+        "is_fallback": answer_res["is_fallback"],
+        "grounded_facts": answer_res["grounded_facts"]
+    }
 
 @app.post("/api/language/translate")
 def translate_text(payload: Dict[str, Any]):
@@ -364,3 +361,8 @@ def get_integration_statuses():
         PFMSAdapter.get_dbt_status("NFST-2026-00821"),
         NSPAdapter.sync_scheme_data("NFST")
     ]
+
+if __name__ == "__main__":
+    import uvicorn
+    print("Starting SETU FastAPI Backend on http://127.0.0.1:8002...")
+    uvicorn.run("main:app", host="127.0.0.1", port=8002, reload=True)

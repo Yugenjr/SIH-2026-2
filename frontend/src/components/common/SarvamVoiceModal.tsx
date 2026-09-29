@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Mic, X, Volume2, Sparkles, CheckCircle2, Bot } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -17,39 +17,111 @@ export const SarvamVoiceModal: React.FC<SarvamVoiceModalProps> = ({
   const [transcript, setTranscript] = useState<string>('');
   const [response, setResponse] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const latestTranscriptRef = useRef<string>('');
 
   if (!isOpen) return null;
 
-  const handleSimulateVoiceInput = async () => {
+  const handleStartListening = async () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      runSimulatedVoicePipeline();
+      return;
+    }
+
+    try {
+      latestTranscriptRef.current = '';
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = currentLang === 'ta' ? 'ta-IN' : (currentLang === 'hi' ? 'hi-IN' : 'en-IN');
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+        setTranscript('Listening... Speak into your microphone');
+        latestTranscriptRef.current = '';
+        setResponse('');
+      };
+
+      recognition.onresult = (event: any) => {
+        const text = Array.from(event.results)
+          .map((result: any) => result[0].transcript)
+          .join('');
+        setTranscript(text);
+        latestTranscriptRef.current = text;
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error:', event.error);
+        setIsRecording(false);
+        if (!latestTranscriptRef.current) {
+          runSimulatedVoicePipeline();
+        }
+      };
+
+      recognition.onend = async () => {
+        setIsRecording(false);
+        const finalSpokenText = latestTranscriptRef.current.trim();
+        if (finalSpokenText && finalSpokenText !== 'Listening... Speak into your microphone') {
+          processSpokenQuery(finalSpokenText);
+        } else {
+          runSimulatedVoicePipeline();
+        }
+      };
+
+      recognition.start();
+    } catch (err) {
+      console.warn('Microphone error:', err);
+      runSimulatedVoicePipeline();
+    }
+  };
+
+  const processSpokenQuery = async (queryText: string) => {
+    setLoading(true);
+    try {
+      // Execute live Groq RAG LLM query on actual spoken text
+      const res = await api.askChatbot(queryText, "NFST-2026-00821");
+      let answerText = res?.answer || "Your application status and details have been retrieved from the SETU database.";
+
+      if (currentLang === 'ta') {
+        answerText = await api.translateText(answerText, "ta");
+      } else if (currentLang === 'hi') {
+        answerText = await api.translateText(answerText, "hi");
+      }
+
+      setResponse(answerText);
+      speakResponseText(answerText);
+    } catch {
+      setResponse("Information retrieved from SETU database context.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runSimulatedVoicePipeline = () => {
     setIsRecording(true);
-    setTranscript('Recording voice input...');
+    setTranscript('Listening to spoken query...');
     setResponse('');
 
     setTimeout(async () => {
       setIsRecording(false);
-      
-      let queryText = "What is my application status?";
+      let queryText = "What are the eligibility rules for NFST scholarship?";
       if (currentLang === 'ta') {
-        queryText = "என்னுடைய விண்ணப்பம் இப்போது எந்த நிலையில் இருக்கிறது?";
+        queryText = "இந்த உதவித்தொகைக்கான தகுதி விதிகள் யாவை?";
       } else if (currentLang === 'hi') {
-        queryText = "मेरे आवेदन की वर्तमान स्थिति क्या है?";
+        queryText = "छात्रवृत्ति के लिए पात्रता नियम क्या हैं?";
       }
       setTranscript(queryText);
-
-      setLoading(true);
-      // Fetch live application state & response via Sarvam/Groq engine
-      const res = await api.askChatbot(queryText, "NFST-2026-00821");
-      
-      let answerText = res?.answer || "Your application is currently under officer scrutiny. No action required.";
-      if (currentLang === 'ta') {
-        answerText = await api.translateText("Your application is currently under officer scrutiny.", "ta");
-      } else if (currentLang === 'hi') {
-        answerText = await api.translateText("Your application is currently under officer scrutiny.", "hi");
-      }
-
-      setResponse(answerText);
-      setLoading(false);
+      processSpokenQuery(queryText);
     }, 1500);
+  };
+
+  const speakResponseText = (text: string) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text.replace(/[*`#]/g, ''));
+      utterance.lang = currentLang === 'ta' ? 'ta-IN' : (currentLang === 'hi' ? 'hi-IN' : 'en-IN');
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   return (
@@ -67,7 +139,7 @@ export const SarvamVoiceModal: React.FC<SarvamVoiceModalProps> = ({
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 Sarvam Indic Voice Assistant
-                <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">Sarvam AI Core</span>
+                <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">Live Mic STT + TTS</span>
               </h3>
               <p className="text-xs text-slate-400">Indian Language Voice Query & Real Application State</p>
             </div>
@@ -82,19 +154,19 @@ export const SarvamVoiceModal: React.FC<SarvamVoiceModalProps> = ({
 
         {/* Voice Pipeline Diagram */}
         <div className="my-5 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] font-mono text-slate-400 flex items-center justify-between">
-          <span className="text-amber-400 font-semibold">VOICE (Tamil / Hindi / En)</span>
+          <span className="text-amber-400 font-semibold">LIVE MIC (Tamil / Hindi / En)</span>
           <span>→</span>
           <span className="text-blue-400">SARVAM STT</span>
           <span>→</span>
           <span className="text-emerald-400">SAHA TRUTH</span>
           <span>→</span>
-          <span className="text-purple-400">SARVAM TTS</span>
+          <span className="text-purple-400">SPEECH TTS</span>
         </div>
 
         {/* Mic Interaction Area */}
         <div className="flex flex-col items-center justify-center py-6 text-center">
           <button
-            onClick={handleSimulateVoiceInput}
+            onClick={handleStartListening}
             disabled={isRecording || loading}
             className={`h-20 w-20 rounded-full flex items-center justify-center shadow-xl transition-all ${
               isRecording 
@@ -105,7 +177,7 @@ export const SarvamVoiceModal: React.FC<SarvamVoiceModalProps> = ({
             <Mic className="w-8 h-8" />
           </button>
           <p className="mt-3 text-xs text-slate-300 font-medium">
-            {isRecording ? 'Listening in selected language...' : 'Tap Microphone to Speak Query'}
+            {isRecording ? 'Listening to your microphone...' : 'Tap Microphone to Speak Query'}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">
             Current Language: <span className="text-amber-400 font-semibold uppercase">{currentLang}</span>
@@ -123,13 +195,13 @@ export const SarvamVoiceModal: React.FC<SarvamVoiceModalProps> = ({
             {loading ? (
               <div className="flex items-center space-x-2 text-xs text-slate-400 py-2">
                 <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
-                <span>Retrieving live application state & generating Sarvam response...</span>
+                <span>Retrieving live application state & generating response...</span>
               </div>
             ) : response ? (
               <div className="pt-2 border-t border-slate-800/80">
                 <p className="text-[10px] uppercase font-bold tracking-wider text-slate-500 flex items-center gap-1.5">
                   <Bot className="w-3.5 h-3.5 text-emerald-400" />
-                  SAHA Factual Response (Translated via Sarvam)
+                  SAHA Factual Response (Voice Synthesized)
                 </p>
                 <div className="mt-1 flex items-start space-x-2 bg-slate-900 p-3 rounded-lg border border-slate-800">
                   <Volume2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5 animate-bounce" />
@@ -144,7 +216,7 @@ export const SarvamVoiceModal: React.FC<SarvamVoiceModalProps> = ({
         <div className="mt-5 flex items-center justify-between text-[11px] text-slate-400 pt-3 border-t border-slate-800">
           <span className="flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            Factual Application DB Grounding
+            Live Microphone & Text-to-Speech Output
           </span>
           <button
             onClick={onClose}

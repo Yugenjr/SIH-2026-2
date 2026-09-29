@@ -1,11 +1,12 @@
 import React from 'react';
 import { Role } from '../../types';
 import { 
-  Search, Bell, Mic, Network, History, Globe, User 
+  Search, Bell, Mic, Network, History, Globe, Shield, User, FileText, CheckCircle2, LogOut 
 } from 'lucide-react';
 
 interface HeaderProps {
   currentRole: Role;
+  onLogout: () => void;
   currentLang: string;
   onLangChange: (lang: string) => void;
   onOpenVoiceModal: () => void;
@@ -15,111 +16,135 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   currentRole,
+  onLogout,
   currentLang,
   onLangChange,
   onOpenVoiceModal,
   onOpenIntegrationsModal,
   onOpenReplayModal
 }) => {
-  const getGreetingName = () => {
-    if (currentRole === 'STUDENT') return 'Arun';
-    if (currentRole === 'OFFICER') return 'Verification Officer';
-    if (currentRole === 'SCHEME_ADMIN') return 'Scheme Administrator';
-    return 'MoTA Admin';
+  const getRoleTitle = () => {
+    if (currentRole === 'STUDENT') return 'Student Services Portal';
+    if (currentRole === 'OFFICER') return 'Officer Verification Workbench';
+    if (currentRole === 'SCHEME_ADMIN') return 'Scheme Policy Administration';
+    return 'MoTA Executive Command Center';
   };
 
-  const getProfileCode = () => {
+  const getUserName = () => {
+    if (currentRole === 'STUDENT') return 'Arun Kumar';
+    if (currentRole === 'OFFICER') return 'Dr. Rajeshwar Prasad';
+    if (currentRole === 'SCHEME_ADMIN') return 'Policy Administrator';
+    return 'Executive Director';
+  };
+
+  const getUserCode = () => {
     if (currentRole === 'STUDENT') return 'STU-88192';
     if (currentRole === 'OFFICER') return 'OFF-104';
-    return 'MoTA-SA031';
+    if (currentRole === 'SCHEME_ADMIN') return 'ADM-302';
+    return 'MOTA-001';
   };
 
   return (
-    <header className="bg-white border-b border-slate-200/80 px-6 py-3.5 flex items-center justify-between shadow-sm sticky top-0 z-30">
+    <header className="bg-white border-b border-slate-300 sticky top-0 z-30 shadow-xs">
       
-      {/* Left Greeting Header */}
-      <div>
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-          Good afternoon, <span className="text-[#0e2a47]">{getGreetingName()}</span>
-        </h2>
-      </div>
-
-      {/* Center Search Bar */}
-      <div className="hidden md:flex items-center bg-slate-100/80 border border-slate-200 rounded-xl px-3.5 py-1.5 w-80 text-xs focus-within:ring-2 focus-within:ring-blue-500/20 transition-all">
-        <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
-        <input
-          type="text"
-          placeholder="Search applications, schemes, documents..."
-          className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 w-full"
-        />
-        <kbd className="hidden lg:inline-block px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-white border border-slate-200 rounded text-slate-400 shadow-2xs">
-          ⌘K
-        </kbd>
-      </div>
-
-      {/* Right Controls & Profile */}
-      <div className="flex items-center space-x-3">
-        
-        {/* Sarvam Voice Button */}
-        <button
-          onClick={onOpenVoiceModal}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 text-xs font-semibold transition-all shadow-2xs"
-          title="Sarvam AI Indic Speech Assistant"
-        >
-          <Mic className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-          <span className="hidden sm:inline">Sarvam Voice</span>
-        </button>
-
-        {/* Connected Services */}
-        <button
-          onClick={onOpenIntegrationsModal}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 text-xs font-semibold transition-all shadow-2xs"
-          title="Connected Integrations Status"
-        >
-          <Network className="w-3.5 h-3.5 text-emerald-600" />
-          <span className="hidden lg:inline">Connected Services</span>
-        </button>
-
-        {/* Audit Decision Replay */}
-        <button
-          onClick={onOpenReplayModal}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200 text-xs font-semibold transition-all shadow-2xs"
-          title="Decision Replay Audit Log"
-        >
-          <History className="w-3.5 h-3.5 text-blue-600" />
-          <span className="hidden lg:inline">Decision Replay</span>
-        </button>
-
-        {/* Language Selector */}
-        <div className="relative flex items-center bg-slate-50 rounded-xl px-2.5 py-1.5 border border-slate-200">
-          <Globe className="w-3.5 h-3.5 text-slate-500 mr-1.5" />
-          <select
-            value={currentLang}
-            onChange={(e) => onLangChange(e.target.value)}
-            className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
-          >
-            <option value="en">English</option>
-            <option value="ta">தமிழ் (Tamil)</option>
-            <option value="hi">हिन्दी (Hindi)</option>
-          </select>
+      {/* 1. Official Government Information Strip */}
+      <div className="bg-[#0b2238] text-slate-200 text-[11px] px-4 py-1 flex flex-wrap items-center justify-between border-b border-slate-700/60 font-medium">
+        <div className="flex items-center space-x-3">
+          <span className="flex items-center space-x-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+            <span>Government of India • Ministry of Tribal Affairs</span>
+          </span>
+          <span className="text-slate-500">|</span>
+          <span className="text-slate-300">Scholarship & Fellowship Services Portal</span>
         </div>
 
-        {/* Bell Notification Icon */}
-        <button className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 relative transition-all">
-          <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-blue-600" />
-        </button>
+        <div className="flex items-center space-x-4 text-[10px] text-slate-300">
+          <span>Smart India Hackathon 2026 Prototype</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-amber-300 font-mono">SIH26239</span>
+        </div>
+      </div>
 
-        {/* User Profile Pill Avatar */}
-        <div className="flex items-center space-x-2.5 pl-2 border-l border-slate-200">
-          <div className="text-right hidden sm:block">
-            <span className="text-xs font-bold text-slate-900 block leading-tight">{getGreetingName()}</span>
-            <span className="text-[10px] font-mono text-slate-500">{getProfileCode()}</span>
+      {/* 2. Main Role-Specific Header Bar */}
+      <div className="w-full px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        
+        {/* Brand Identity & Role Workspace Title */}
+        <div className="flex items-center space-x-3">
+          <div className="w-9 h-9 rounded-lg bg-[#0e2a47] text-white flex items-center justify-center font-black text-base tracking-wider border border-slate-700 shadow-xs">
+            सेतु
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-base font-bold text-slate-900 tracking-tight leading-none">
+                SETU <span className="text-xs text-slate-500 font-medium">• {getRoleTitle()}</span>
+              </h1>
+              <span className="px-2 py-0.5 rounded text-[10px] bg-blue-50 text-blue-800 border border-blue-200 font-mono font-bold">
+                {getUserCode()}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+              Signed in as: <strong className="text-slate-800 font-semibold">{getUserName()}</strong>
+            </p>
+          </div>
+        </div>
+
+        {/* Right Controls & Role Session Switcher */}
+        <div className="flex items-center space-x-2">
+          
+          {/* Sarvam AI Indic Voice Assistant Button */}
+          <button
+            onClick={onOpenVoiceModal}
+            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 text-xs font-bold transition-all"
+            title="Sarvam AI Indic Voice Assistant"
+          >
+            <Mic className="w-3.5 h-3.5 text-amber-700" />
+            <span className="hidden md:inline">Voice Assistant</span>
+          </button>
+
+          {/* Connected Integrations Status */}
+          <button
+            onClick={onOpenIntegrationsModal}
+            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-300 text-xs font-semibold transition-all"
+            title="Connected Integrations (DigiLocker / PFMS / NSP)"
+          >
+            <Network className="w-3.5 h-3.5 text-emerald-700" />
+            <span className="hidden lg:inline">Integrations</span>
+          </button>
+
+          {/* Decision Replay Audit Trail */}
+          <button
+            onClick={onOpenReplayModal}
+            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-300 text-xs font-semibold transition-all"
+            title="Audit Decision Replay Log"
+          >
+            <History className="w-3.5 h-3.5 text-blue-700" />
+            <span className="hidden lg:inline">Audit Trail</span>
+          </button>
+
+          {/* Language Switcher Dropdown */}
+          <div className="flex items-center bg-slate-50 rounded-lg px-2 py-1 border border-slate-300 text-xs font-semibold">
+            <Globe className="w-3.5 h-3.5 text-slate-500 mr-1" />
+            <select
+              value={currentLang}
+              onChange={(e) => onLangChange(e.target.value)}
+              className="bg-transparent text-slate-800 outline-none cursor-pointer text-xs"
+            >
+              <option value="en">English</option>
+              <option value="ta">தமிழ்</option>
+              <option value="hi">हिन्दी</option>
+            </select>
           </div>
 
-          <div className="h-9 w-9 rounded-full bg-[#0e2a47] text-white flex items-center justify-center font-bold text-xs shadow-sm ring-2 ring-slate-100">
-            {getGreetingName().substring(0, 1)}
-          </div>
+          {/* Switch Persona / Logout */}
+          <button
+            onClick={onLogout}
+            className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-bold transition-all ml-2"
+            title="Switch Persona Role"
+          >
+            <LogOut className="w-3.5 h-3.5 text-slate-600" />
+            <span>Switch Role</span>
+          </button>
+
         </div>
 
       </div>
@@ -127,3 +152,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Role, UserProfile, SchemeConfig, Application, Fellowship } from './types';
 import { api } from './services/api';
 import { Header } from './components/common/Header';
+import { LoginScreen } from './components/common/LoginScreen';
 import { SarvamVoiceModal } from './components/common/SarvamVoiceModal';
 import { ConnectedIntegrationsModal } from './components/common/ConnectedIntegrationsModal';
 import { DecisionReplayModal } from './components/common/DecisionReplayModal';
@@ -15,6 +16,7 @@ import { CommandCenter } from './components/mota/CommandCenter';
 import { FellowshipLifecycleView } from './components/fellowship/FellowshipLifecycleView';
 
 export function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [role, setRole] = useState<Role>('STUDENT');
   const [lang, setLang] = useState<string>('en');
   const [studentView, setStudentView] = useState<'HOME' | 'DISCOVERY' | 'APPLICATION' | 'FELLOWSHIP'>('HOME');
@@ -57,13 +59,24 @@ export function App() {
     setStudentView('HOME');
   };
 
+  if (!isLoggedIn) {
+    return (
+      <LoginScreen
+        onLogin={(selectedRole) => {
+          setRole(selectedRole);
+          setIsLoggedIn(true);
+        }}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-[#f3f6fa] text-slate-900 flex flex-col font-sans selection:bg-[#0e2a47] selection:text-white">
       
-      {/* Persistent Navigation Header */}
+      {/* Persistent Role-Specific Header */}
       <Header
         currentRole={role}
-        onRoleChange={setRole}
+        onLogout={() => setIsLoggedIn(false)}
         currentLang={lang}
         onLangChange={setLang}
         onOpenVoiceModal={() => setIsVoiceOpen(true)}
@@ -72,12 +85,12 @@ export function App() {
       />
 
       {/* Main View Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 w-full px-4 sm:px-6 py-6">
         
         {loading ? (
           <div className="py-24 text-center space-y-3">
-            <div className="inline-block h-8 w-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm font-semibold text-slate-400">Loading SAHA Verification Engine & Data...</p>
+            <div className="inline-block h-8 w-8 border-3 border-[#0e2a47] border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm font-semibold text-slate-600">Loading SETU Verification Engine & Data...</p>
           </div>
         ) : (
           <>
@@ -152,10 +165,10 @@ export function App() {
       </main>
 
       {/* Global Footer */}
-      <footer className="bg-slate-950 border-t border-slate-800 text-slate-400 text-xs py-4 px-6 text-center">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>SAHA — Intelligent Scholarship Verification & Lifecycle Platform (SIH26239)</span>
-          <span className="font-mono text-slate-500">Ministry of Tribal Affairs • "VERIFY. RESOLVE. TRACK."</span>
+      <footer className="bg-[#0b2238] border-t border-slate-700 text-slate-300 text-xs py-4 px-6 text-center">
+        <div className="w-full px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span>SETU — Intelligent Scholarship Verification & Lifecycle Platform (SIH26239)</span>
+          <span className="font-mono text-slate-400">Government of India • Ministry of Tribal Affairs</span>
         </div>
       </footer>
 

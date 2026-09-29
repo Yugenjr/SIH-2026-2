@@ -61,7 +61,7 @@ export const OfficerWorkbench: React.FC<OfficerWorkbenchProps> = ({ onRefresh })
   };
 
   return (
-    <div className="space-y-4 max-w-[1600px] mx-auto pb-12">
+    <div className="space-y-4 w-full pb-12">
       
       {/* Header Bar */}
       <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">

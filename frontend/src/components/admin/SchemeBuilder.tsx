@@ -22,7 +22,7 @@ export const SchemeBuilder: React.FC<SchemeBuilderProps> = ({ schemes }) => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-12">
+    <div className="w-full space-y-6 pb-12">
       
       {/* Header */}
       <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
