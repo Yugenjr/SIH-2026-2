@@ -1,6 +1,6 @@
 import { Application, SchemeConfig, UserProfile, Fellowship, AuditRecord, IntegrationStatus } from '../types';
 
-const API_BASE = 'http://127.0.0.1:8002/api';
+const API_BASE = 'https://backend-ihon.vercel.app/api';
 
 async function fetchJson(endpoint: string, options?: RequestInit) {
   try {
