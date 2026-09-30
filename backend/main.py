@@ -112,7 +112,10 @@ def get_application_by_id(app_id: str, db: Session = Depends(get_db)):
     return app
 
 # --- DOCUMENT INTELLIGENCE ---
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+if os.getenv("VERCEL") or os.getenv("VERCEL_ENV"):
+    UPLOAD_DIR = "/tmp/uploads"
+else:
+    UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @app.post("/api/documents/upload")
